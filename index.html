@@ -84,7 +84,7 @@
   .header {
     grid-column: 1 / -1;
     display: grid;
-    grid-template-columns: 1.4fr 0.9fr 0.9fr 0.9fr 0.9fr 1fr;
+    grid-template-columns: 1.4fr 1fr 1fr 1fr 1fr;
     align-items: center;
     background: linear-gradient(90deg,#07142b 0%,#0a1d3d 100%);
     border:1px solid #1c3a6e; border-radius:8px; padding: 14px 22px;
@@ -700,7 +700,7 @@ async function fetchTWSEQuote(symbol) {
         const j = await res.json();
         const d = j.msgArray?.[0];
         if (!d || !d.z || d.z === '-') continue;
-        return { price: parseFloat(d.z), prevClose: parseFloat(d.y) || null, time: d.t || null };
+        return { price: parseFloat(d.z), prevClose: parseFloat(d.y) || null, time: d.t || null, volume: parseFloat(d.v) || null };
       } catch {}
     }
   }
@@ -718,48 +718,41 @@ async function fetchYFQuote(yfSym) {
       if (!r?.regularMarketPrice) continue;
       const t = new Date(r.regularMarketTime * 1000);
       const timeStr = t.toLocaleTimeString('zh-TW', { hour12: false });
-      return { price: r.regularMarketPrice, prevClose: r.regularMarketPreviousClose || null, time: timeStr };
+      return { price: r.regularMarketPrice, prevClose: r.regularMarketPreviousClose || null, time: timeStr, volume: r.regularMarketVolume || null, change: r.regularMarketChange ?? null, changePct: r.regularMarketChangePercent ?? null };
     } catch {}
   }
   return null;
 }
 
 async function updateLiveQuote(symbol, isTW, fallbackPrevClose) {
-  const box = document.getElementById('liveQuoteBox');
-  if (!box || _liveSymbol !== symbol) return;
-  const priceEl = box.querySelector('.live-price');
-  const metaEl  = box.querySelector('.live-meta');
+  if (_liveSymbol !== symbol) return;
 
   let data = null;
   if (isTW) data = await fetchTWSEQuote(symbol);
   if (!data) data = await fetchYFQuote(isTW ? `${symbol}.TW` : symbol);
-
-  if (!data) {
-    priceEl.className = 'live-price value small';
-    priceEl.textContent = '--';
-    metaEl.innerHTML = `<span style="color:#8aa6ce;font-size:11px">無法取得</span>`;
-    return;
-  }
+  if (!data) return; // 失敗時保留收盤資訊不動
 
   const ref = data.prevClose ?? fallbackPrevClose;
-  const change = ref ? data.price - ref : 0;
+  const change = data.change ?? (ref ? data.price - ref : 0);
+  const changePct = data.changePct ?? (ref && ref !== 0 ? (change / ref) * 100 : 0);
   const isFlat = Math.abs(change) < 0.005;
   const cls   = isFlat ? 'flat' : (change > 0 ? 'up' : 'down');
   const arrow = isFlat ? '—' : (change > 0 ? '▲' : '▼');
-  priceEl.className = `live-price value small ${cls}`;
-  priceEl.textContent = fmt(data.price);
-  metaEl.innerHTML = `<span class="${cls}" style="font-size:11px">${arrow}${isFlat ? '' : fmt(Math.abs(change))}</span>`
-    + (data.time ? ` <span style="color:#8aa6ce;font-size:11px">${data.time}<span class="live-dot"></span></span>` : '');
+
+  const priceEl  = document.getElementById('hdrPrice');
+  const changeEl = document.getElementById('hdrChange');
+  const volEl    = document.getElementById('hdrVolume');
+  const timeEl   = document.getElementById('hdrTime');
+
+  if (priceEl)  { priceEl.className = `value ${cls}`;       priceEl.textContent = fmt(data.price); }
+  if (changeEl) { changeEl.className = `value small ${cls}`; changeEl.innerHTML = isFlat ? '— (0.00%)' : `${arrow} ${fmt(Math.abs(change))} (${pct(changePct)})`; }
+  if (volEl && data.volume != null) { volEl.textContent = fmtVol(data.volume); }
+  if (timeEl && data.time) { timeEl.innerHTML = `${data.time} <span class="live-dot"></span>`; }
 }
 
 function startLiveQuote(symbol, isTW, fallbackPrevClose) {
   stopLiveQuote();
   _liveSymbol = symbol;
-  const box = document.getElementById('liveQuoteBox');
-  if (box) {
-    box.querySelector('.live-price').textContent = '更新中…';
-    box.querySelector('.live-meta').textContent = '';
-  }
   updateLiveQuote(symbol, isTW, fallbackPrevClose);
   _liveTimer = setInterval(() => updateLiveQuote(symbol, isTW, fallbackPrevClose), 60000);
 }
@@ -778,11 +771,10 @@ function renderHeader(meta, candles) {
   const titleName = name !== symRaw ? `<b>${name}</b>` : '';
   document.getElementById('hdr').innerHTML = `
     <div class="title">${symRaw} ${titleName} 分析與建議</div>
-    <div><div class="label">資料時間</div><div class="value small">${dateStr}</div></div>
-    <div><div class="label">收盤價</div><div class="value">${fmt(last.close)}</div></div>
-    <div><div class="label">漲跌</div><div class="value ${cls}">${arrow} ${fmt(Math.abs(change))} (${pct(pctChg)})</div></div>
-    <div><div class="label">成交量</div><div class="value small">${fmtVol(last.volume)}</div></div>
-    <div id="liveQuoteBox"><div class="label">即時價</div><div class="live-price value small">—</div><div class="live-meta"></div></div>
+    <div><div class="label">時間</div><div class="value small" id="hdrTime">${dateStr}</div></div>
+    <div><div class="label">價格</div><div class="value" id="hdrPrice">${fmt(last.close)}</div></div>
+    <div><div class="label">漲跌</div><div class="value ${cls}" id="hdrChange">${arrow} ${fmt(Math.abs(change))} (${pct(pctChg)})</div></div>
+    <div><div class="label">成交量</div><div class="value small" id="hdrVolume">${fmtVol(last.volume)}</div></div>
   `;
 }
 
