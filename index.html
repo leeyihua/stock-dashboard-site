@@ -105,7 +105,11 @@
   .header .value { font-size:22px; font-weight:600; color:#fff;}
   .header .value.up { color:#ff5757;}
   .header .value.down { color:#3ddc84;}
+  .header .value.flat { color:#e6edf7;}
   .header .value.small { font-size:16px;}
+  .header .up   { color:#ff5757; }
+  .header .down { color:#3ddc84; }
+  .header .flat { color:#e6edf7; }
 
   .panel {
     background: rgba(8,18,40,0.92);
@@ -739,11 +743,12 @@ async function updateLiveQuote(symbol, isTW, fallbackPrevClose) {
 
   const ref = data.prevClose ?? fallbackPrevClose;
   const change = ref ? data.price - ref : 0;
-  const cls = change >= 0 ? 'up' : 'down';
-  const arrow = change >= 0 ? '▲' : '▼';
+  const isFlat = Math.abs(change) < 0.005;
+  const cls   = isFlat ? 'flat' : (change > 0 ? 'up' : 'down');
+  const arrow = isFlat ? '—' : (change > 0 ? '▲' : '▼');
   priceEl.className = `live-price value small ${cls}`;
   priceEl.textContent = fmt(data.price);
-  metaEl.innerHTML = `<span class="${cls}" style="font-size:11px">${arrow}${fmt(Math.abs(change))}</span>`
+  metaEl.innerHTML = `<span class="${cls}" style="font-size:11px">${arrow}${isFlat ? '' : fmt(Math.abs(change))}</span>`
     + (data.time ? ` <span style="color:#8aa6ce;font-size:11px">${data.time}<span class="live-dot"></span></span>` : '');
 }
 
@@ -768,7 +773,7 @@ function renderHeader(meta, candles) {
   const arrow = change >= 0 ? '▲' : '▼';
   const cls = change >= 0 ? 'up' : 'down';
   const dateStr = last.date.toISOString().slice(0, 10);
-  const symRaw = meta.symbol;
+  const symRaw = meta.symbol.replace(/:TWSE$|:TWEX$/, '').replace(/\.(TW|TWO)$/i, '');
   const name = meta.shortName || symRaw;
   const titleName = name !== symRaw ? `<b>${name}</b>` : '';
   document.getElementById('hdr').innerHTML = `
@@ -983,6 +988,7 @@ function renderGauge(pct) {
 }
 
 async function analyze(symbol) {
+  symbol = symbol.trim().toUpperCase();
   stopLiveQuote();
   const dash = document.getElementById('dashboard');
   const status = document.getElementById('status');
@@ -1043,7 +1049,7 @@ async function analyze(symbol) {
 
   renderHeader(stock.meta, stock.candles);
   const _prevClose = stock.candles[stock.candles.length - 2]?.close ?? null;
-  startLiveQuote(stock.meta.symbol, stock.isTW, _prevClose);
+  startLiveQuote(symbol, stock.isTW, _prevClose);
 
   const last = stock.candles[stock.candles.length - 1];
   const i = closes.length - 1;
