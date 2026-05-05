@@ -689,36 +689,24 @@ function stopLiveQuote() {
   _liveSymbol = null;
 }
 
-async function fetchTWSEQuote(symbol) {
-  const sym = symbol.toLowerCase();
-  for (const ex of ['tse', 'otc']) {
-    const url = `https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=${ex}_${sym}.tw&json=1&delay=0`;
-    for (const ch of YAHOO_CHANNELS.slice(0, 4)) {
-      try {
-        const res = await fetchWithTimeout(ch.wrap(url), 6000);
-        if (!res.ok) continue;
-        const j = await res.json();
-        const d = j.msgArray?.[0];
-        if (!d || !d.z || d.z === '-') continue;
-        return { price: parseFloat(d.z), prevClose: parseFloat(d.y) || null, time: d.t || null, volume: parseFloat(d.v) || null };
-      } catch {}
-    }
-  }
-  return null;
-}
-
-async function fetchYFQuote(yfSym) {
-  const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(yfSym)}`;
+async function fetchLiveQuote(yfSym) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yfSym}?interval=1d&range=1d`;
   for (const ch of YAHOO_CHANNELS) {
     try {
-      const res = await fetchWithTimeout(ch.wrap(url), 6000);
+      const res = await fetchWithTimeout(ch.wrap(url), 8000);
       if (!res.ok) continue;
-      const j = await res.json();
-      const r = j.quoteResponse?.result?.[0];
-      if (!r?.regularMarketPrice) continue;
-      const t = new Date(r.regularMarketTime * 1000);
-      const timeStr = t.toLocaleTimeString('zh-TW', { hour12: false });
-      return { price: r.regularMarketPrice, prevClose: r.regularMarketPreviousClose || null, time: timeStr, volume: r.regularMarketVolume || null, change: r.regularMarketChange ?? null, changePct: r.regularMarketChangePercent ?? null };
+      const text = await res.text();
+      const j = JSON.parse(text);
+      const m = j.chart?.result?.[0]?.meta;
+      if (!m?.regularMarketPrice) continue;
+      const ts = m.regularMarketTime;
+      const timeStr = ts ? new Date(ts * 1000).toLocaleTimeString('zh-TW', { hour12: false }) : null;
+      return {
+        price:     m.regularMarketPrice,
+        prevClose: m.chartPreviousClose ?? m.previousClose ?? null,
+        volume:    m.regularMarketVolume ?? null,
+        time:      timeStr,
+      };
     } catch {}
   }
   return null;
@@ -727,14 +715,13 @@ async function fetchYFQuote(yfSym) {
 async function updateLiveQuote(symbol, isTW, fallbackPrevClose) {
   if (_liveSymbol !== symbol) return;
 
-  let data = null;
-  if (isTW) data = await fetchTWSEQuote(symbol);
-  if (!data) data = await fetchYFQuote(isTW ? `${symbol}.TW` : symbol);
+  const yfSym = isTW ? `${symbol}.TW` : symbol;
+  const data = await fetchLiveQuote(yfSym);
   if (!data) return; // 失敗時保留收盤資訊不動
 
   const ref = data.prevClose ?? fallbackPrevClose;
-  const change = data.change ?? (ref ? data.price - ref : 0);
-  const changePct = data.changePct ?? (ref && ref !== 0 ? (change / ref) * 100 : 0);
+  const change = ref ? data.price - ref : 0;
+  const changePct = ref ? (change / ref) * 100 : 0;
   const isFlat = Math.abs(change) < 0.005;
   const cls   = isFlat ? 'flat' : (change > 0 ? 'up' : 'down');
   const arrow = isFlat ? '—' : (change > 0 ? '▲' : '▼');
@@ -744,7 +731,7 @@ async function updateLiveQuote(symbol, isTW, fallbackPrevClose) {
   const volEl    = document.getElementById('hdrVolume');
   const timeEl   = document.getElementById('hdrTime');
 
-  if (priceEl)  { priceEl.className = `value ${cls}`;       priceEl.textContent = fmt(data.price); }
+  if (priceEl)  { priceEl.className = `value ${cls}`;        priceEl.textContent = fmt(data.price); }
   if (changeEl) { changeEl.className = `value small ${cls}`; changeEl.innerHTML = isFlat ? '— (0.00%)' : `${arrow} ${fmt(Math.abs(change))} (${pct(changePct)})`; }
   if (volEl && data.volume != null) { volEl.textContent = fmtVol(data.volume); }
   if (timeEl && data.time) { timeEl.innerHTML = `${data.time} <span class="live-dot"></span>`; }
