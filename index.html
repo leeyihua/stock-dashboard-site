@@ -405,34 +405,40 @@ async function fetchWithTimeout(url, ms = 12000) {
   finally { clearTimeout(t); }
 }
 
-function yahooUrl(yfSym) {
-  return `https://query1.finance.yahoo.com/v8/finance/chart/${yfSym}?interval=1d&range=8mo`;
+const YAHOO_HOSTS = [
+  'query1.finance.yahoo.com',
+  'query2.finance.yahoo.com',
+];
+function yahooUrl(yfSym, host = YAHOO_HOSTS[0]) {
+  return `https://${host}/v8/finance/chart/${yfSym}?interval=1d&range=8mo`;
 }
 const YAHOO_CHANNELS = [
   { name:'corsproxy.io',   wrap:u => `https://corsproxy.io/?${encodeURIComponent(u)}`  },
   { name:'allorigins',     wrap:u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}` },
-  { name:'codetabs',       wrap:u => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}` },
+  { name:'codetabs',       wrap:u => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}` },
   { name:'thingproxy',     wrap:u => `https://thingproxy.freeboard.io/fetch/${u}` },
   { name:'yahoo direct',   wrap:u => u },
 ];
 
 async function fetchYahoo(yfSym) {
-  const url = yahooUrl(yfSym);
   const errs = [];
-  for (const ch of YAHOO_CHANNELS) {
-    try {
-      const res = await fetchWithTimeout(ch.wrap(url), 12000);
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const text = await res.text();
-      if (!text) throw new Error('空回應');
-      let data;
-      try { data = JSON.parse(text); } catch { throw new Error('非 JSON'); }
-      if (!data?.chart?.result?.[0]) throw new Error('chart.result 為空');
-      console.log('OK Yahoo via ' + ch.name);
-      return data.chart.result[0];
-    } catch (e) {
-      console.warn('FAIL Yahoo via ' + ch.name + ':', e.message);
-      errs.push(`${ch.name}: ${e.message}`);
+  for (const host of YAHOO_HOSTS) {
+    const url = yahooUrl(yfSym, host);
+    for (const ch of YAHOO_CHANNELS) {
+      try {
+        const res = await fetchWithTimeout(ch.wrap(url), 12000);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const text = await res.text();
+        if (!text) throw new Error('空回應');
+        let data;
+        try { data = JSON.parse(text); } catch { throw new Error('非 JSON'); }
+        if (!data?.chart?.result?.[0]) throw new Error('chart.result 為空');
+        console.log(`OK Yahoo via ${ch.name} (${host.includes('query2') ? 'q2' : 'q1'})`);
+        return data.chart.result[0];
+      } catch (e) {
+        console.warn(`FAIL Yahoo via ${ch.name} (${host}):`, e.message);
+        errs.push(`${ch.name}/${host.includes('query2') ? 'q2' : 'q1'}: ${e.message}`);
+      }
     }
   }
   throw new Error('Yahoo 全通道失敗\n' + errs.join('\n'));
@@ -989,10 +995,10 @@ async function analyze(symbol) {
         <div style="font-size:13px; color:#cfe3ff; margin-top:10px; line-height:1.7;">
           <b style="color:#ffd24d;">解法（依序嘗試）：</b><br/>
           1. <b>確認代號正確</b> — 台股 4 碼數字（2317）、美股英文（AAPL/NVDA/TSLA）。<br/>
-          2. <b>台股資料來自 FinMind</b>（免費，無需 API Key）— 若顯示此錯誤代表 FinMind 暫時無法連線，請稍後再試。<br/>
-          3. <b>填 Twelve Data API Key</b>（美股最穩，免費 800 次/天） —
-              <a href="https://twelvedata.com/register" target="_blank" style="color:#7fc8ff;">免費註冊</a>，
-              貼到上方 API Key 欄位。<br/>
+          2. <b>美股必填 Twelve Data API Key</b>（免費，每天 800 次）—
+              <a href="https://twelvedata.com/register" target="_blank" style="color:#7fc8ff;">免費註冊取得 Key</a>，
+              貼到右上角 API Key 欄位即可。台股不需要此 Key。<br/>
+          3. <b>台股資料來自 FinMind</b>（免費，無需 API Key）— 若台股也失敗，代表 FinMind 暫時無法連線，請稍後再試。<br/>
           4. <b>用本地伺服器開啟</b>（解 CORS）：
               在資料夾執行 <code style="background:#0e1c38; padding:1px 6px; border-radius:3px;">python3 -m http.server 8000</code>，
               開 <code style="background:#0e1c38; padding:1px 6px; border-radius:3px;">http://localhost:8000</code>。
