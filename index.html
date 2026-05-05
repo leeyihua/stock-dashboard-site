@@ -84,10 +84,20 @@
   .header {
     grid-column: 1 / -1;
     display: grid;
-    grid-template-columns: 1.6fr 1fr 1fr 1fr 1fr;
+    grid-template-columns: 1.4fr 0.9fr 0.9fr 0.9fr 0.9fr 1fr;
     align-items: center;
     background: linear-gradient(90deg,#07142b 0%,#0a1d3d 100%);
     border:1px solid #1c3a6e; border-radius:8px; padding: 14px 22px;
+  }
+  .live-dot {
+    display: inline-block; width: 6px; height: 6px;
+    background: #3ddc84; border-radius: 50%; margin-left: 3px;
+    vertical-align: middle;
+    animation: livepulse 1.5s infinite;
+  }
+  @keyframes livepulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.2; }
   }
   .header .title { font-size:26px; font-weight:700; color:#cfe3ff;}
   .header .title b { color:#ffd24d; padding: 0 4px;}
@@ -666,6 +676,90 @@ function pct(v) {
   return (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
 }
 
+// ── 即時報價 ─────────────────────────────────────────────────
+let _liveTimer = null;
+let _liveSymbol = null;
+
+function stopLiveQuote() {
+  if (_liveTimer) { clearInterval(_liveTimer); _liveTimer = null; }
+  _liveSymbol = null;
+}
+
+async function fetchTWSEQuote(symbol) {
+  const sym = symbol.toLowerCase();
+  for (const ex of ['tse', 'otc']) {
+    const url = `https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=${ex}_${sym}.tw&json=1&delay=0`;
+    for (const ch of YAHOO_CHANNELS.slice(0, 4)) {
+      try {
+        const res = await fetchWithTimeout(ch.wrap(url), 6000);
+        if (!res.ok) continue;
+        const j = await res.json();
+        const d = j.msgArray?.[0];
+        if (!d || !d.z || d.z === '-') continue;
+        return { price: parseFloat(d.z), prevClose: parseFloat(d.y) || null, time: d.t || null };
+      } catch {}
+    }
+  }
+  return null;
+}
+
+async function fetchYFQuote(yfSym) {
+  const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(yfSym)}`;
+  for (const ch of YAHOO_CHANNELS) {
+    try {
+      const res = await fetchWithTimeout(ch.wrap(url), 6000);
+      if (!res.ok) continue;
+      const j = await res.json();
+      const r = j.quoteResponse?.result?.[0];
+      if (!r?.regularMarketPrice) continue;
+      const t = new Date(r.regularMarketTime * 1000);
+      const timeStr = t.toLocaleTimeString('zh-TW', { hour12: false });
+      return { price: r.regularMarketPrice, prevClose: r.regularMarketPreviousClose || null, time: timeStr };
+    } catch {}
+  }
+  return null;
+}
+
+async function updateLiveQuote(symbol, isTW, fallbackPrevClose) {
+  const box = document.getElementById('liveQuoteBox');
+  if (!box || _liveSymbol !== symbol) return;
+  const priceEl = box.querySelector('.live-price');
+  const metaEl  = box.querySelector('.live-meta');
+
+  let data = null;
+  if (isTW) data = await fetchTWSEQuote(symbol);
+  if (!data) data = await fetchYFQuote(isTW ? `${symbol}.TW` : symbol);
+
+  if (!data) {
+    priceEl.className = 'live-price value small';
+    priceEl.textContent = '--';
+    metaEl.innerHTML = `<span style="color:#8aa6ce;font-size:11px">無法取得</span>`;
+    return;
+  }
+
+  const ref = data.prevClose ?? fallbackPrevClose;
+  const change = ref ? data.price - ref : 0;
+  const cls = change >= 0 ? 'up' : 'down';
+  const arrow = change >= 0 ? '▲' : '▼';
+  priceEl.className = `live-price value small ${cls}`;
+  priceEl.textContent = fmt(data.price);
+  metaEl.innerHTML = `<span class="${cls}" style="font-size:11px">${arrow}${fmt(Math.abs(change))}</span>`
+    + (data.time ? ` <span style="color:#8aa6ce;font-size:11px">${data.time}<span class="live-dot"></span></span>` : '');
+}
+
+function startLiveQuote(symbol, isTW, fallbackPrevClose) {
+  stopLiveQuote();
+  _liveSymbol = symbol;
+  const box = document.getElementById('liveQuoteBox');
+  if (box) {
+    box.querySelector('.live-price').textContent = '更新中…';
+    box.querySelector('.live-meta').textContent = '';
+  }
+  updateLiveQuote(symbol, isTW, fallbackPrevClose);
+  _liveTimer = setInterval(() => updateLiveQuote(symbol, isTW, fallbackPrevClose), 60000);
+}
+// ─────────────────────────────────────────────────────────────
+
 function renderHeader(meta, candles) {
   const last = candles[candles.length - 1];
   const prev = candles[candles.length - 2];
@@ -683,6 +777,7 @@ function renderHeader(meta, candles) {
     <div><div class="label">收盤價</div><div class="value">${fmt(last.close)}</div></div>
     <div><div class="label">漲跌</div><div class="value ${cls}">${arrow} ${fmt(Math.abs(change))} (${pct(pctChg)})</div></div>
     <div><div class="label">成交量</div><div class="value small">${fmtVol(last.volume)}</div></div>
+    <div id="liveQuoteBox"><div class="label">即時價</div><div class="live-price value small">—</div><div class="live-meta"></div></div>
   `;
 }
 
@@ -888,6 +983,7 @@ function renderGauge(pct) {
 }
 
 async function analyze(symbol) {
+  stopLiveQuote();
   const dash = document.getElementById('dashboard');
   const status = document.getElementById('status');
   status.className = 'visible';
@@ -946,6 +1042,8 @@ async function analyze(symbol) {
   });
 
   renderHeader(stock.meta, stock.candles);
+  const _prevClose = stock.candles[stock.candles.length - 2]?.close ?? null;
+  startLiveQuote(stock.meta.symbol, stock.isTW, _prevClose);
 
   const last = stock.candles[stock.candles.length - 1];
   const i = closes.length - 1;
