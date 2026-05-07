@@ -17,7 +17,9 @@ async function handleQuote(params) {
   }
 
   const yfSym = symbol.toUpperCase();
-  // 依序嘗試 query1 / query2
+  const isTW = yfSym.endsWith('.TW') || yfSym.endsWith('.TWO');
+  const twId = isTW ? yfSym.replace(/\.(TW|TWO)$/, '') : null;
+
   const hosts = ['query1.finance.yahoo.com', 'query2.finance.yahoo.com'];
   const headers = {
     'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -31,6 +33,21 @@ async function handleQuote(params) {
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       if (!data?.chart?.result?.[0]) throw new Error('chart.result 為空');
+
+      // 台股：從 FinMind 補中文股名
+      if (isTW && twId) {
+        try {
+          const infoUrl = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo&data_id=${encodeURIComponent(twId)}`;
+          const infoRes = await fetch(infoUrl);
+          if (infoRes.ok) {
+            const infoJson = await infoRes.json();
+            const chName = infoJson?.data?.[0]?.stock_name;
+            if (chName) data.chart.result[0].meta.shortName = chName;
+          }
+        } catch (e) {
+          console.warn('FinMind 股名查詢失敗:', e.message);
+        }
+      }
 
       return new Response(JSON.stringify(data), {
         headers: {
