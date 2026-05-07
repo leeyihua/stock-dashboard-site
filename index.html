@@ -728,51 +728,53 @@ function pct(v) {
 // ── 即時報價 ─────────────────────────────────────────────────
 let _liveTimer = null;
 let _liveSymbol = null;
+let _livePending = false;
 
 function stopLiveQuote() {
   if (_liveTimer) { clearInterval(_liveTimer); _liveTimer = null; }
   _liveSymbol = null;
+  _livePending = false;
+}
+
+function parseTsToDatetime(epochSec) {
+  if (!epochSec) return { date: null, time: null };
+  const ts = new Date(epochSec * 1000);
+  return { date: ts.toISOString().slice(0, 10), time: ts.toLocaleTimeString('zh-TW', { hour12: false }) };
 }
 
 async function fetchLiveQuote(yfSym) {
-  // 優先走 Worker（server-side，無 CORS）
   try {
     const res = await fetchWithTimeout(`/api/live?symbol=${encodeURIComponent(yfSym)}`, 8000);
     if (res.ok) {
       const d = await res.json();
-      if (d.price) {
-        const ts = d.time ? new Date(d.time * 1000) : null;
-        return {
-          price: d.price, prevClose: d.prevClose, volume: d.volume,
-          date: ts ? ts.toISOString().slice(0, 10) : null,
-          time: ts ? ts.toLocaleTimeString('zh-TW', { hour12: false }) : null,
-        };
-      }
+      if (d.price) return { price: d.price, prevClose: d.prevClose, volume: d.volume, ...parseTsToDatetime(d.time) };
     }
-  } catch {}
-
-  // fallback：CORS proxy 鏈
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yfSym}?interval=1d&range=1d`;
-  for (const ch of YAHOO_CHANNELS) {
-    try {
-      const res = await fetchWithTimeout(ch.wrap(url), 8000);
-      if (!res.ok) continue;
-      const j = JSON.parse(await res.text());
-      const m = j.chart?.result?.[0]?.meta;
-      if (!m?.regularMarketPrice) continue;
-      const ts = m.regularMarketTime ? new Date(m.regularMarketTime * 1000) : null;
-      return {
-        price: m.regularMarketPrice, prevClose: m.chartPreviousClose ?? m.previousClose ?? null, volume: m.regularMarketVolume ?? null,
-        date: ts ? ts.toISOString().slice(0, 10) : null,
-        time: ts ? ts.toLocaleTimeString('zh-TW', { hour12: false }) : null,
-      };
-    } catch {}
+  } catch (e) {
+    console.warn('Worker /api/live 失敗:', e.message);
   }
+
+  // fallback：CORS proxy 並行競速
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yfSym}?interval=1d&range=1d`;
+  try {
+    const m = await Promise.any(
+      YAHOO_CHANNELS.map(ch =>
+        fetchWithTimeout(ch.wrap(url), 8000)
+          .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+          .then(text => {
+            const meta = JSON.parse(text)?.chart?.result?.[0]?.meta;
+            if (!meta?.regularMarketPrice) throw new Error('無資料');
+            return meta;
+          })
+      )
+    );
+    return { price: m.regularMarketPrice, prevClose: m.chartPreviousClose ?? m.previousClose ?? null, volume: m.regularMarketVolume ?? null, ...parseTsToDatetime(m.regularMarketTime) };
+  } catch {}
   return null;
 }
 
 async function updateLiveQuote(symbol, isTW, fallbackPrevClose) {
-  if (_liveSymbol !== symbol) return;
+  if (_liveSymbol !== symbol || _livePending) return;
+  _livePending = true;
 
   const yfSym = isTW ? `${symbol}.TW` : symbol;
   const data = await fetchLiveQuote(yfSym);
@@ -800,6 +802,7 @@ async function updateLiveQuote(symbol, isTW, fallbackPrevClose) {
     timeEl.innerHTML = `${data.time} <span class="live-dot"></span>`;
     timeBox.style.display = '';
   }
+  _livePending = false;
 }
 
 function startLiveQuote(symbol, isTW, fallbackPrevClose) {
