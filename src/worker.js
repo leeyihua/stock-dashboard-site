@@ -42,7 +42,10 @@ async function handleQuote(params) {
       if (isTW && twId) {
         try {
           const infoUrl = `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo&data_id=${encodeURIComponent(twId)}`;
-          const infoRes = await fetch(infoUrl);
+          const infoRes = await Promise.race([
+            fetch(infoUrl),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
+          ]);
           if (infoRes.ok) {
             const infoJson = await infoRes.json();
             const chName = infoJson?.data?.[0]?.stock_name;

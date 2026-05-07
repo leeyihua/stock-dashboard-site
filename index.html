@@ -716,8 +716,12 @@ async function fetchLiveQuote(yfSym) {
     if (res.ok) {
       const d = await res.json();
       if (d.price) {
-        const timeStr = d.time ? new Date(d.time * 1000).toLocaleTimeString('zh-TW', { hour12: false }) : null;
-        return { price: d.price, prevClose: d.prevClose, volume: d.volume, time: timeStr };
+        const ts = d.time ? new Date(d.time * 1000) : null;
+        return {
+          price: d.price, prevClose: d.prevClose, volume: d.volume,
+          date: ts ? ts.toISOString().slice(0, 10) : null,
+          time: ts ? ts.toLocaleTimeString('zh-TW', { hour12: false }) : null,
+        };
       }
     }
   } catch {}
@@ -731,8 +735,12 @@ async function fetchLiveQuote(yfSym) {
       const j = JSON.parse(await res.text());
       const m = j.chart?.result?.[0]?.meta;
       if (!m?.regularMarketPrice) continue;
-      const timeStr = m.regularMarketTime ? new Date(m.regularMarketTime * 1000).toLocaleTimeString('zh-TW', { hour12: false }) : null;
-      return { price: m.regularMarketPrice, prevClose: m.chartPreviousClose ?? m.previousClose ?? null, volume: m.regularMarketVolume ?? null, time: timeStr };
+      const ts = m.regularMarketTime ? new Date(m.regularMarketTime * 1000) : null;
+      return {
+        price: m.regularMarketPrice, prevClose: m.chartPreviousClose ?? m.previousClose ?? null, volume: m.regularMarketVolume ?? null,
+        date: ts ? ts.toISOString().slice(0, 10) : null,
+        time: ts ? ts.toLocaleTimeString('zh-TW', { hour12: false }) : null,
+      };
     } catch {}
   }
   return null;
@@ -752,15 +760,21 @@ async function updateLiveQuote(symbol, isTW, fallbackPrevClose) {
   const cls   = isFlat ? 'flat' : (change > 0 ? 'up' : 'down');
   const arrow = isFlat ? '—' : (change > 0 ? '▲' : '▼');
 
-  const priceEl  = document.getElementById('hdrPrice');
-  const changeEl = document.getElementById('hdrChange');
-  const volEl    = document.getElementById('hdrVolume');
-  const timeEl   = document.getElementById('hdrTime');
+  const priceEl   = document.getElementById('hdrPrice');
+  const changeEl  = document.getElementById('hdrChange');
+  const volEl     = document.getElementById('hdrVolume');
+  const dateEl    = document.getElementById('hdrDate');
+  const timeEl    = document.getElementById('hdrTime');
+  const timeBox   = document.getElementById('hdrTimeBox');
 
   if (priceEl)  { priceEl.className = `value ${cls}`;        priceEl.textContent = fmt(data.price); }
   if (changeEl) { changeEl.className = `value small ${cls}`; changeEl.innerHTML = isFlat ? '— (0.00%)' : `${arrow} ${fmt(Math.abs(change))} (${pct(changePct)})`; }
   if (volEl && data.volume != null) { volEl.textContent = fmtVol(data.volume); }
-  if (timeEl && data.time) { timeEl.innerHTML = `${data.time} <span class="live-dot"></span>`; }
+  if (data.date && dateEl) { dateEl.textContent = data.date; }
+  if (data.time && timeEl && timeBox) {
+    timeEl.innerHTML = `${data.time} <span class="live-dot"></span>`;
+    timeBox.style.display = '';
+  }
 }
 
 function startLiveQuote(symbol, isTW, fallbackPrevClose) {
@@ -784,7 +798,8 @@ function renderHeader(meta, candles) {
   const titleName = name !== symRaw ? `<b>${name}</b>` : '';
   document.getElementById('hdr').innerHTML = `
     <div class="title">${symRaw} ${titleName} 分析與建議</div>
-    <div><div class="label">時間</div><div class="value small" id="hdrTime">${dateStr}</div></div>
+    <div><div class="label">日期</div><div class="value small" id="hdrDate">${dateStr}</div></div>
+    <div id="hdrTimeBox" style="display:none"><div class="label">時間</div><div class="value small" id="hdrTime"></div></div>
     <div><div class="label">價格</div><div class="value" id="hdrPrice">${fmt(last.close)}</div></div>
     <div><div class="label">漲跌</div><div class="value ${cls}" id="hdrChange">${arrow} ${fmt(Math.abs(change))} (${pct(pctChg)})</div></div>
     <div><div class="label">成交量</div><div class="value small" id="hdrVolume">${fmtVol(last.volume)}</div></div>
