@@ -1,0 +1,10 @@
+CLAUDE.md
+README.md
+vercel.json
+netlify.toml
+.gitignore
+wrangler.toml
+src/
+static/
+.github/
+.claude/

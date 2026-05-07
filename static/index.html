@@ -504,17 +504,6 @@ async function fetchFinMind(symbol) {
   };
 }
 
-async function fetchWorker(yfSym) {
-  const url = `/api/quote?symbol=${encodeURIComponent(yfSym)}`;
-  const res = await fetchWithTimeout(url, 8000);
-  if (!res.ok) throw new Error('HTTP ' + res.status);
-  const data = await res.json();
-  if (data.error) throw new Error(data.error);
-  if (!data?.chart?.result?.[0]) throw new Error('chart.result 為空');
-  console.log('OK Worker /api/quote');
-  return data.chart.result[0];
-}
-
 async function fetchStock(symbol) {
   symbol = symbol.trim().toUpperCase();
   const isTW = /^\d{4,6}$|^\d{4,5}[A-Z]$/.test(symbol);
@@ -523,10 +512,7 @@ async function fetchStock(symbol) {
   const yfSymAlt = isTW ? `${symbol}.TWO` : null;
 
   let result, errs = [];
-  try { result = await fetchWorker(yfSym); }
-  catch (e) { errs.push('Worker: ' + e.message); }
-
-  if (!result && tdKey) {
+  if (tdKey) {
     try { result = await fetchTwelveData(symbol, isTW, tdKey); }
     catch (e) { errs.push('Twelve Data: ' + e.message); }
   }
