@@ -4,6 +4,7 @@ vercel.json
 netlify.toml
 .gitignore
 wrangler.toml
+node_modules/
 src/
 static/
 .github/
