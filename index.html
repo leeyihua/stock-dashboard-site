@@ -710,23 +710,29 @@ function stopLiveQuote() {
 }
 
 async function fetchLiveQuote(yfSym) {
+  // 優先走 Worker（server-side，無 CORS）
+  try {
+    const res = await fetchWithTimeout(`/api/live?symbol=${encodeURIComponent(yfSym)}`, 8000);
+    if (res.ok) {
+      const d = await res.json();
+      if (d.price) {
+        const timeStr = d.time ? new Date(d.time * 1000).toLocaleTimeString('zh-TW', { hour12: false }) : null;
+        return { price: d.price, prevClose: d.prevClose, volume: d.volume, time: timeStr };
+      }
+    }
+  } catch {}
+
+  // fallback：CORS proxy 鏈
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yfSym}?interval=1d&range=1d`;
   for (const ch of YAHOO_CHANNELS) {
     try {
       const res = await fetchWithTimeout(ch.wrap(url), 8000);
       if (!res.ok) continue;
-      const text = await res.text();
-      const j = JSON.parse(text);
+      const j = JSON.parse(await res.text());
       const m = j.chart?.result?.[0]?.meta;
       if (!m?.regularMarketPrice) continue;
-      const ts = m.regularMarketTime;
-      const timeStr = ts ? new Date(ts * 1000).toLocaleTimeString('zh-TW', { hour12: false }) : null;
-      return {
-        price:     m.regularMarketPrice,
-        prevClose: m.chartPreviousClose ?? m.previousClose ?? null,
-        volume:    m.regularMarketVolume ?? null,
-        time:      timeStr,
-      };
+      const timeStr = m.regularMarketTime ? new Date(m.regularMarketTime * 1000).toLocaleTimeString('zh-TW', { hour12: false }) : null;
+      return { price: m.regularMarketPrice, prevClose: m.chartPreviousClose ?? m.previousClose ?? null, volume: m.regularMarketVolume ?? null, time: timeStr };
     } catch {}
   }
   return null;
