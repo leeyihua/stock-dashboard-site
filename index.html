@@ -747,7 +747,11 @@ async function fetchLiveQuote(yfSym) {
     const res = await fetchWithTimeout(`/api/live?symbol=${encodeURIComponent(yfSym)}`, 8000);
     if (res.ok) {
       const d = await res.json();
-      if (d.price) return { price: d.price, prevClose: d.prevClose, volume: d.volume, ...parseTsToDatetime(d.time) };
+      if (d.price != null) return { price: d.price, prevClose: d.prevClose, volume: d.volume, ...parseTsToDatetime(d.time) };
+      console.warn('Worker /api/live: 無 price 欄位', d);
+    } else {
+      const errText = await res.text().catch(() => '');
+      console.warn(`Worker /api/live HTTP ${res.status}:`, errText);
     }
   } catch (e) {
     console.warn('Worker /api/live 失敗:', e.message);
@@ -776,33 +780,36 @@ async function updateLiveQuote(symbol, isTW, fallbackPrevClose) {
   if (_liveSymbol !== symbol || _livePending) return;
   _livePending = true;
 
-  const yfSym = isTW ? `${symbol}.TW` : symbol;
-  const data = await fetchLiveQuote(yfSym);
-  if (!data) return; // 失敗時保留收盤資訊不動
+  try {
+    const yfSym = isTW ? `${symbol}.TW` : symbol;
+    const data = await fetchLiveQuote(yfSym);
+    if (!data || _liveSymbol !== symbol) return;
 
-  const ref = data.prevClose ?? fallbackPrevClose;
-  const change = ref ? data.price - ref : 0;
-  const changePct = ref ? (change / ref) * 100 : 0;
-  const isFlat = Math.abs(change) < 0.005;
-  const cls   = isFlat ? 'flat' : (change > 0 ? 'up' : 'down');
-  const arrow = isFlat ? '—' : (change > 0 ? '▲' : '▼');
+    const ref = data.prevClose ?? fallbackPrevClose;
+    const change = ref ? data.price - ref : 0;
+    const changePct = ref ? (change / ref) * 100 : 0;
+    const isFlat = Math.abs(change) < 0.005;
+    const cls   = isFlat ? 'flat' : (change > 0 ? 'up' : 'down');
+    const arrow = isFlat ? '—' : (change > 0 ? '▲' : '▼');
 
-  const priceEl   = document.getElementById('hdrPrice');
-  const changeEl  = document.getElementById('hdrChange');
-  const volEl     = document.getElementById('hdrVolume');
-  const dateEl    = document.getElementById('hdrDate');
-  const timeEl    = document.getElementById('hdrTime');
-  const timeBox   = document.getElementById('hdrTimeBox');
+    const priceEl   = document.getElementById('hdrPrice');
+    const changeEl  = document.getElementById('hdrChange');
+    const volEl     = document.getElementById('hdrVolume');
+    const dateEl    = document.getElementById('hdrDate');
+    const timeEl    = document.getElementById('hdrTime');
+    const timeBox   = document.getElementById('hdrTimeBox');
 
-  if (priceEl)  { priceEl.className = `value ${cls}`;        priceEl.textContent = fmt(data.price); }
-  if (changeEl) { changeEl.className = `value small ${cls}`; changeEl.innerHTML = isFlat ? '— (0.00%)' : `${arrow} ${fmt(Math.abs(change))} (${pct(changePct)})`; }
-  if (volEl && data.volume != null) { volEl.textContent = fmtVol(data.volume); }
-  if (data.date && dateEl) { dateEl.textContent = data.date; }
-  if (data.time && timeEl && timeBox) {
-    timeEl.innerHTML = `${data.time} <span class="live-dot"></span>`;
-    timeBox.style.display = '';
+    if (priceEl)  { priceEl.className = `value ${cls}`;        priceEl.textContent = fmt(data.price); }
+    if (changeEl) { changeEl.className = `value small ${cls}`; changeEl.innerHTML = isFlat ? '— (0.00%)' : `${arrow} ${fmt(Math.abs(change))} (${pct(changePct)})`; }
+    if (volEl && data.volume != null) { volEl.textContent = fmtVol(data.volume); }
+    if (data.date && dateEl) { dateEl.textContent = data.date; }
+    if (data.time && timeEl && timeBox) {
+      timeEl.innerHTML = `${data.time} <span class="live-dot"></span>`;
+      timeBox.style.display = '';
+    }
+  } finally {
+    _livePending = false;
   }
-  _livePending = false;
 }
 
 function startLiveQuote(symbol, isTW, fallbackPrevClose) {
