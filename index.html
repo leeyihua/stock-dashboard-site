@@ -26,12 +26,25 @@
   }
   .searchbar h1 { font-size: 22px; color:#cfe3ff; font-weight:700; letter-spacing:1px;}
   .searchbar h1 b { color:#ffd24d; padding: 0 6px;}
+  .search-wrap { position: relative; }
   .searchbar input {
     background:#050b1a; border:1px solid #2f8aff; color:#fff;
     padding:10px 14px; border-radius:6px; font-size:16px;
     width:220px; outline:none; font-family: inherit;
   }
   .searchbar input::placeholder{ color:#6f88b3;}
+  #searchDropdown {
+    position:absolute; top:100%; left:0; right:0;
+    background:#0d1f42; border:1px solid #2f8aff; border-top:none;
+    border-radius:0 0 6px 6px; z-index:100; display:none;
+  }
+  #searchDropdown.visible { display:block; }
+  #searchDropdown .drop-item {
+    padding:9px 14px; cursor:pointer; font-size:14px;
+    color:#cfe3ff; display:flex; gap:10px; align-items:center;
+  }
+  #searchDropdown .drop-item:hover { background:rgba(47,138,255,0.2); }
+  #searchDropdown .drop-sym { color:#ffd24d; font-weight:700; min-width:52px; }
   .searchbar button {
     background:#2f8aff; color:#fff; border:none;
     padding:10px 22px; border-radius:6px;
@@ -309,7 +322,10 @@
 
 <div class="searchbar">
   <h1>智能股票分析<b>儀表板</b></h1>
-  <input id="symbolInput" type="text" placeholder="例如 2317、AAPL" autocomplete="off"/>
+  <div class="search-wrap">
+    <input id="symbolInput" type="text" placeholder="例如 2317、台積電、AAPL" autocomplete="off"/>
+    <div id="searchDropdown"></div>
+  </div>
   <button id="analyzeBtn">分析</button>
   <div class="quick-tags">
     <span data-sym="2317">2317 鴻海</span>
@@ -320,7 +336,7 @@
     <span data-sym="TSLA">TSLA</span>
   </div>
   <div class="hint">
-    台股 <b>4 碼數字</b> · 美股 <b>英文代號</b><br/>
+    台股 <b>4 碼數字</b>或<b>中文名稱</b> · 美股 <b>英文代號</b><br/>
     資料：Twelve Data / Yahoo（多通道 fallback）
     <div style="margin-top:6px;">
       <span class="key-label">API Key（選填，更穩）：</span>
@@ -1391,13 +1407,60 @@ async function analyze(symbol) {
     <div class="disclaimer">本圖為自動技術分析，僅供參考，不保證獲利</div>`;
 }
 
+// ── 中文搜尋自動完成 ─────────────────────────────────────────
+let _searchTimer = null;
+
+async function doSearch(q) {
+  if (!q || !/[一-鿿]/.test(q)) { closeDropdown(); return; }
+  try {
+    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+    if (!res.ok) return;
+    const { results } = await res.json();
+    renderDropdown(results);
+  } catch {}
+}
+
+function renderDropdown(results) {
+  const dd = document.getElementById('searchDropdown');
+  if (!results?.length) { closeDropdown(); return; }
+  dd.innerHTML = results.map(r =>
+    `<div class="drop-item" data-sym="${r.symbol}">
+       <span class="drop-sym">${r.symbol}</span><span>${r.name}</span>
+     </div>`
+  ).join('');
+  dd.classList.add('visible');
+  dd.querySelectorAll('.drop-item').forEach(el => {
+    el.addEventListener('click', () => {
+      document.getElementById('symbolInput').value = el.dataset.sym;
+      closeDropdown();
+      document.getElementById('analyzeBtn').click();
+    });
+  });
+}
+
+function closeDropdown() {
+  const dd = document.getElementById('searchDropdown');
+  dd.classList.remove('visible');
+  dd.innerHTML = '';
+}
+
+document.getElementById('symbolInput').addEventListener('input', e => {
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(() => doSearch(e.target.value.trim()), 300);
+});
+document.addEventListener('click', e => {
+  if (!e.target.closest('.search-wrap')) closeDropdown();
+});
+// ─────────────────────────────────────────────────────────────
+
 document.getElementById('analyzeBtn').addEventListener('click', () => {
   const sym = document.getElementById('symbolInput').value.trim();
   if (!sym) return;
   analyze(sym);
 });
 document.getElementById('symbolInput').addEventListener('keydown', e => {
-  if (e.key === 'Enter') document.getElementById('analyzeBtn').click();
+  if (e.key === 'Enter') { closeDropdown(); document.getElementById('analyzeBtn').click(); }
+  if (e.key === 'Escape') closeDropdown();
 });
 document.querySelectorAll('.quick-tags span').forEach(el => {
   el.addEventListener('click', () => {

@@ -4,14 +4,25 @@ const YAHOO_HEADERS = {
   'Accept': 'application/json',
 };
 
+const FUGLE_BASE = 'https://api.fugle.tw/marketdata/v1.0/stock';
+
+// 全域快取，Worker 重啟後失效，每小時更新一次
+let _tickersCache = null;
+let _tickersCacheTime = 0;
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname === '/api/quote') return handleQuote(url.searchParams);
-    if (url.pathname === '/api/live')  return handleLive(url.searchParams);
+    if (url.pathname === '/api/quote')  return handleQuote(url.searchParams, env);
+    if (url.pathname === '/api/live')   return handleLive(url.searchParams, env);
+    if (url.pathname === '/api/search') return handleSearch(url.searchParams, env);
     return env.ASSETS.fetch(request);
   },
 };
+
+function fugleHeaders(env) {
+  return { 'X-API-KEY': env.FUGLE_API_KEY };
+}
 
 async function fetchYahooChart(yfSym, range) {
   for (const host of YAHOO_HOSTS) {
@@ -29,7 +40,7 @@ async function fetchYahooChart(yfSym, range) {
   return null;
 }
 
-async function handleQuote(params) {
+async function handleQuote(params, env) {
   const symbol = params.get('symbol');
   if (!symbol) return jsonResponse({ error: '缺少 symbol 參數' }, 400);
 
@@ -37,12 +48,11 @@ async function handleQuote(params) {
   const isTW = yfSym.endsWith('.TW') || yfSym.endsWith('.TWO');
   const twId = isTW ? yfSym.replace(/\.(TW|TWO)$/, '') : null;
 
-  // FinMind 與 Yahoo 平行發出，互不等待
-  const finmindPromise = isTW
-    ? Promise.race([
-        fetch(`https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo&data_id=${encodeURIComponent(twId)}`),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
-      ]).catch(() => null)
+  // 台股：Fugle 取中文名稱，與 Yahoo 平行發出
+  const namePromise = (isTW && env.FUGLE_API_KEY)
+    ? fetch(`${FUGLE_BASE}/intraday/ticker/${encodeURIComponent(twId)}`, { headers: fugleHeaders(env) })
+        .then(r => r.ok ? r.json() : null)
+        .catch(() => null)
     : Promise.resolve(null);
 
   const data = await fetchYahooChart(yfSym, '8mo');
@@ -50,13 +60,10 @@ async function handleQuote(params) {
 
   if (isTW) {
     try {
-      const infoRes = await finmindPromise;
-      if (infoRes?.ok) {
-        const chName = (await infoRes.json())?.data?.[0]?.stock_name;
-        if (chName) data.chart.result[0].meta.shortName = chName;
-      }
+      const ticker = await namePromise;
+      if (ticker?.name) data.chart.result[0].meta.shortName = ticker.name;
     } catch (e) {
-      console.warn('FinMind 股名查詢失敗:', e.message);
+      console.warn('Fugle ticker 查詢失敗:', e.message);
     }
   }
 
@@ -69,11 +76,43 @@ async function handleQuote(params) {
   });
 }
 
-async function handleLive(params) {
+async function handleLive(params, env) {
   const symbol = params.get('symbol');
   if (!symbol) return jsonResponse({ error: '缺少 symbol 參數' }, 400);
 
-  const data = await fetchYahooChart(symbol.toUpperCase(), '1d');
+  const yfSym = symbol.toUpperCase();
+  const isTW = yfSym.endsWith('.TW') || yfSym.endsWith('.TWO');
+
+  // 台股 → Fugle 即時報價，失敗時 fallback Yahoo
+  if (isTW && env.FUGLE_API_KEY) {
+    const twId = yfSym.replace(/\.(TW|TWO)$/, '');
+    try {
+      const res = await fetch(`${FUGLE_BASE}/intraday/quote/${encodeURIComponent(twId)}`, {
+        headers: fugleHeaders(env),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const d = await res.json();
+      if (!d?.lastPrice) throw new Error('無 lastPrice');
+      return new Response(JSON.stringify({
+        price:     d.lastPrice,
+        prevClose: d.previousClose ?? null,
+        volume:    d.total?.tradeVolume ?? null,
+        // Fugle 時間戳為微秒，轉換為秒
+        time:      d.closeTime ? Math.floor(d.closeTime / 1_000_000) : null,
+      }), {
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-store',
+        },
+      });
+    } catch (e) {
+      console.warn('Fugle live 失敗，fallback Yahoo:', e.message);
+    }
+  }
+
+  // 美股 或 Fugle 失敗 → Yahoo
+  const data = await fetchYahooChart(yfSym, '1d');
   if (!data) return jsonResponse({ error: `無法取得 ${symbol} 即時報價` }, 502);
 
   const m = data.chart.result[0].meta;
@@ -93,9 +132,47 @@ async function handleLive(params) {
   });
 }
 
+async function fetchTickers(env) {
+  const now = Date.now();
+  if (_tickersCache && now - _tickersCacheTime < 3_600_000) return _tickersCache;
+
+  const [twse, tpex] = await Promise.all([
+    fetch(`${FUGLE_BASE}/intraday/tickers?type=EQUITY&exchange=TWSE`, { headers: fugleHeaders(env) })
+      .then(r => r.ok ? r.json() : null).catch(() => null),
+    fetch(`${FUGLE_BASE}/intraday/tickers?type=EQUITY&exchange=TPEx`, { headers: fugleHeaders(env) })
+      .then(r => r.ok ? r.json() : null).catch(() => null),
+  ]);
+
+  const list = [
+    ...(twse?.data ?? []),
+    ...(tpex?.data ?? []),
+  ];
+
+  if (list.length > 0) {
+    _tickersCache = list;
+    _tickersCacheTime = now;
+  }
+  return list;
+}
+
+async function handleSearch(params, env) {
+  const q = (params.get('q') || '').trim();
+  if (!q) return jsonResponse({ results: [] });
+  if (!env.FUGLE_API_KEY) return jsonResponse({ error: '未設定 FUGLE_API_KEY' }, 503);
+
+  const list = await fetchTickers(env);
+  const lower = q.toLowerCase();
+  const results = list
+    .filter(s => s.name?.includes(q) || s.symbol?.toLowerCase().startsWith(lower))
+    .slice(0, 8)
+    .map(s => ({ symbol: s.symbol, name: s.name }));
+
+  return jsonResponse({ results });
+}
+
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
   });
 }
