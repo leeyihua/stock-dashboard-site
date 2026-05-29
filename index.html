@@ -295,6 +295,26 @@
   .footer .v.cyan  { color:#7fc8ff;}
   .footer .disclaimer { text-align:right; font-size:12px; color:#7d96bd;}
 
+  .etf-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 5px 16px;
+    margin-top: 6px;
+  }
+  .etf-item {
+    display: flex; align-items: center; gap: 8px; font-size: 12px;
+  }
+  .etf-code { color: #ffd24d; font-weight: 700; min-width: 54px; }
+  .etf-bar-wrap {
+    flex: 1; background: rgba(255,255,255,0.07);
+    border-radius: 3px; height: 7px; overflow: hidden;
+  }
+  .etf-bar-fill {
+    height: 100%; border-radius: 3px;
+    background: linear-gradient(90deg, #1a4fd6, #7dd3fc);
+  }
+  .etf-pct { color: #cfe3ff; min-width: 46px; text-align: right; }
+
   @media (max-width: 1199px) {
     .dashboard { grid-template-columns: 1fr 1fr; }
     .col-right-2 { grid-column: 1 / -1; }
@@ -433,6 +453,11 @@
   <div class="panel col-right-2">
     <h3>中長線看法</h3>
     <div class="mid-long" id="midLongBox"></div>
+  </div>
+
+  <div class="panel" id="etfPanel" style="grid-column: 1 / -1; display:none;">
+    <h3>ETF 持有清單（台股專用）</h3>
+    <div id="etfContent"></div>
   </div>
 
   <div class="footer" id="footer"></div>
@@ -1387,6 +1412,17 @@ async function analyze(symbol) {
       <li>${rec.aboveMA60 ? '建議：可作為核心持股之一，搭配 ETF 分散風險' : '建議：避免重壓，等待趨勢明確再進場'}</li>
     </ul>`;
 
+  // ETF 持有清單（非同步，不阻擋主流程）
+  if (stock.isTW) {
+    const etfPanel = document.getElementById('etfPanel');
+    etfPanel.style.display = '';
+    document.getElementById('etfContent').innerHTML =
+      '<div style="color:#9ec0ec;font-size:13px;"><span class="spinner"></span> 載入 ETF 持有清單…</div>';
+    fetchEtfHoldings(symbol).then(etfData => renderEtfPanel(etfData, stock.isTW));
+  } else {
+    document.getElementById('etfPanel').style.display = 'none';
+  }
+
   const trendLabel = rec.trendScore > 25 ? '偏強' : rec.trendScore < -10 ? '偏弱' : '中性整理';
   const trendCls = rec.trendScore > 25 ? 'red' : rec.trendScore < -10 ? 'green' : 'amber';
   const techLabel = rec.rsiNow > 70 ? '過熱' : rec.rsiNow < 30 ? '超賣' : (rec.macdBull?'轉強':'偏弱');
@@ -1406,6 +1442,50 @@ async function analyze(symbol) {
     <div class="stat"><div class="k">難度</div><div class="v ${diffCls}">${diffLabel}</div></div>
     <div class="disclaimer">本圖為自動技術分析，僅供參考，不保證獲利</div>`;
 }
+
+// ── ETF 持有清單 ──────────────────────────────────────────────
+const ETF_API = 'https://script.google.com/macros/s/AKfycbwVXGjxdV8GiM3DD_ViT3MSz9D0c629fvCVuC6vEtz2ARORbdeNIE19c6uwL4cU7Bbe/exec';
+
+async function fetchEtfHoldings(symbol) {
+  try {
+    const res = await fetchWithTimeout(`${ETF_API}?stock=${encodeURIComponent(symbol)}`, 10000);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (!Array.isArray(data?.etfs) || !data.etfs.length) return null;
+    return data;
+  } catch (e) {
+    console.warn('ETF holdings 查詢失敗:', e.message);
+    return null;
+  }
+}
+
+function renderEtfPanel(data, isTW) {
+  const panel   = document.getElementById('etfPanel');
+  const content = document.getElementById('etfContent');
+  if (!isTW) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+  if (!data) {
+    content.innerHTML = '<div style="color:#9ec0ec;font-size:13px;">無法取得 ETF 持有資料</div>';
+    return;
+  }
+  const maxW = data.etfs[0].weight;
+  content.innerHTML = `
+    <div style="font-size:11px;color:#9ec0ec;margin-bottom:8px;">
+      共被 <b style="color:#ffd24d;">${data.etfs.length}</b> 檔 ETF 持有 ·
+      <span style="color:#7d96bd;">${data.date || ''}</span>
+    </div>
+    <div class="etf-grid">
+      ${data.etfs.map(e => `
+        <div class="etf-item">
+          <span class="etf-code">${e.etf}</span>
+          <div class="etf-bar-wrap">
+            <div class="etf-bar-fill" style="width:${((e.weight / maxW) * 100).toFixed(1)}%"></div>
+          </div>
+          <span class="etf-pct">${e.weight.toFixed(2)}%</span>
+        </div>`).join('')}
+    </div>`;
+}
+// ─────────────────────────────────────────────────────────────
 
 // ── 中文搜尋自動完成 ─────────────────────────────────────────
 let _searchTimer = null;
