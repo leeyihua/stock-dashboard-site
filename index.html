@@ -1420,7 +1420,7 @@ async function analyze(symbol) {
   } else {
     riskClass = 'warning'; riskHead = '風險適中'; riskBody = '指標尚未極端<br/>→ 依交易紀律執行';
   }
-  document.getElementById('riskPanel').className = 'panel ' + riskClass;
+  document.getElementById('riskPanel').className = 'panel col-left-2 ' + riskClass;
   document.getElementById('riskTitle').textContent = '風險提醒';
   document.getElementById('riskTitle').style.color = riskClass==='danger'?'#ff6b6b':'#ffb12c';
   document.getElementById('riskTitle').style.borderColor = riskClass==='danger'?'#ff6b6b':'#ffb12c';
