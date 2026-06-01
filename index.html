@@ -464,12 +464,12 @@
     <div class="small" id="keypriceNote"></div>
   </div>
 
-  <div class="panel col-left-2" id="riskPanel">
+  <div class="panel" id="riskPanel">
     <h3 id="riskTitle">風險提醒</h3>
     <div class="warn-box" id="riskBox"></div>
   </div>
 
-  <div class="panel col-right-2">
+  <div class="panel">
     <h3>中長線看法</h3>
     <div class="mid-long" id="midLongBox"></div>
   </div>
@@ -1420,7 +1420,7 @@ async function analyze(symbol) {
   } else {
     riskClass = 'warning'; riskHead = '風險適中'; riskBody = '指標尚未極端<br/>→ 依交易紀律執行';
   }
-  document.getElementById('riskPanel').className = 'panel col-left-2 ' + riskClass;
+  document.getElementById('riskPanel').className = 'panel ' + riskClass;
   document.getElementById('riskTitle').textContent = '風險提醒';
   document.getElementById('riskTitle').style.color = riskClass==='danger'?'#ff6b6b':'#ffb12c';
   document.getElementById('riskTitle').style.borderColor = riskClass==='danger'?'#ff6b6b':'#ffb12c';
@@ -1448,7 +1448,7 @@ async function analyze(symbol) {
   }
 
   // 個股新聞（非同步，不阻擋主流程）
-  fetchNews(stock.symbolDisplay, stock.meta.shortName);
+  fetchNews(stock.symbolDisplay, stock.meta.shortName, stock.meta.longName);
 
   const trendLabel = rec.trendScore > 25 ? '偏強' : rec.trendScore < -10 ? '偏弱' : '中性整理';
   const trendCls = rec.trendScore > 25 ? 'red' : rec.trendScore < -10 ? 'green' : 'amber';
@@ -1515,7 +1515,7 @@ function renderEtfPanel(data, isTW) {
 // ─────────────────────────────────────────────────────────────
 
 // ── 個股新聞 ─────────────────────────────────────────────────
-async function fetchNews(symbolDisplay, stockName) {
+async function fetchNews(symbolDisplay, stockName, longName) {
   const panel   = document.getElementById('newsPanel');
   const content = document.getElementById('newsContent');
   const title   = document.getElementById('newsTitle');
@@ -1525,7 +1525,7 @@ async function fetchNews(symbolDisplay, stockName) {
 
   try {
     const params = new URLSearchParams({ symbol: symbolDisplay });
-    if (stockName && stockName !== symbolDisplay) params.set('name', stockName);
+    if (longName) params.set('longName', longName);
     const res = await fetchWithTimeout(`/api/news?${params}`, 10000);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const { items, error } = await res.json();

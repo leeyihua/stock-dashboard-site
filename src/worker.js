@@ -172,31 +172,30 @@ async function handleSearch(params, env) {
 }
 
 async function handleNews(params) {
-  const symbol = (params.get('symbol') || '').trim();
-  const name   = (params.get('name')   || '').trim();
+  const symbol   = (params.get('symbol')   || '').trim();
+  const longName = (params.get('longName') || '').trim();
   if (!symbol) return jsonResponse({ error: '缺少 symbol 參數' }, 400);
 
-  const isTW = /\.(TW|TWO)$/i.test(symbol);
-  // 台股優先用中文名稱搜尋，美股用代號
+  const isTW  = /\.(TW|TWO)$/i.test(symbol);
   const rawId = symbol.replace(/\.(TW|TWO)$/i, '');
-  const query = isTW ? (name || rawId) : rawId;
-  const locale = isTW
-    ? 'zh-TW&gl=TW&ceid=TW:zh-Hant'
-    : 'en-US&gl=US&ceid=US:en';
-  const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=${locale}`;
+  // 台股用英文公司名稱搜尋（精度更高），美股直接用代號
+  const query = (isTW && longName) ? longName : rawId;
+
+  const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&newsCount=10&enableNavLinks=false`;
 
   try {
-    const res = await fetch(rssUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'zh-TW,zh;q=0.9,en;q=0.8',
-      },
+    const res = await fetch(url, {
+      headers: YAHOO_HEADERS,
       signal: AbortSignal.timeout(8000),
     });
-    if (!res.ok) throw new Error('Google News HTTP ' + res.status);
-    const xml = await res.text();
-    const items = parseRssItems(xml).slice(0, 10);
+    if (!res.ok) throw new Error('Yahoo Finance HTTP ' + res.status);
+    const data = await res.json();
+    const items = (data.news || []).map(n => ({
+      title:   n.title   || '',
+      link:    n.link    || '',
+      pubDate: n.providerPublishTime ? new Date(n.providerPublishTime * 1000).toUTCString() : '',
+      source:  n.publisher || '',
+    }));
     return new Response(JSON.stringify({ items }), {
       headers: {
         'Content-Type': 'application/json',
@@ -207,31 +206,6 @@ async function handleNews(params) {
   } catch (e) {
     return jsonResponse({ error: e.message }, 502);
   }
-}
-
-function parseRssItems(xml) {
-  const items = [];
-  const itemRe = /<item>([\s\S]*?)<\/item>/g;
-  let m;
-  while ((m = itemRe.exec(xml)) !== null) {
-    const b = m[1];
-    items.push({
-      title:   extractXml(b, 'title'),
-      link:    extractXml(b, 'link'),
-      pubDate: extractXml(b, 'pubDate'),
-      source:  extractXml(b, 'source'),
-    });
-  }
-  return items;
-}
-
-function extractXml(block, tag) {
-  // CDATA
-  let m = block.match(new RegExp(`<${tag}[^>]*><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/${tag}>`));
-  if (m) return m[1].trim();
-  // plain
-  m = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`));
-  return m ? m[1].trim() : '';
 }
 
 function jsonResponse(body, status = 200) {
