@@ -271,6 +271,7 @@
   .paths .arrow { color:#7fc8ff; padding:0 6px;}
 
   .col-right-2 { grid-column: 3 / span 2; }
+  .col-left-2  { grid-column: 1 / span 2; }
 
   .footer {
     grid-column: 1 / -1;
@@ -315,9 +316,27 @@
   }
   .etf-pct { color: #cfe3ff; min-width: 46px; text-align: right; }
 
+  .news-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 0 24px;
+  }
+  .news-item {
+    padding: 9px 0;
+    border-bottom: 1px solid #1a2f50;
+  }
+  .news-item:last-child { border-bottom: none; }
+  .news-item a {
+    font-size: 13px; color: #7fc8ff; text-decoration: none;
+    line-height: 1.5; display: block;
+  }
+  .news-item a:hover { color: #cfe3ff; text-decoration: underline; }
+  .news-meta { font-size: 11px; color: #4a6a90; margin-top: 3px; }
+
   @media (max-width: 1199px) {
     .dashboard { grid-template-columns: 1fr 1fr; }
     .col-right-2 { grid-column: 1 / -1; }
+    .col-left-2  { grid-column: 1 / -1; }
     .footer { grid-template-columns: repeat(3, 1fr); }
   }
   @media (max-width: 767px) {
@@ -445,7 +464,7 @@
     <div class="small" id="keypriceNote"></div>
   </div>
 
-  <div class="panel" id="riskPanel">
+  <div class="panel col-left-2" id="riskPanel">
     <h3 id="riskTitle">風險提醒</h3>
     <div class="warn-box" id="riskBox"></div>
   </div>
@@ -458,6 +477,11 @@
   <div class="panel" id="etfPanel" style="grid-column: 1 / -1; display:none;">
     <h3>ETF 持有清單（台股專用）</h3>
     <div id="etfContent"></div>
+  </div>
+
+  <div class="panel" id="newsPanel" style="grid-column: 1 / -1; display:none;">
+    <h3 id="newsTitle">個股新聞</h3>
+    <div id="newsContent"></div>
   </div>
 
   <div class="footer" id="footer"></div>
@@ -1423,6 +1447,9 @@ async function analyze(symbol) {
     document.getElementById('etfPanel').style.display = 'none';
   }
 
+  // 個股新聞（非同步，不阻擋主流程）
+  fetchNews(stock.symbolDisplay, stock.meta.shortName);
+
   const trendLabel = rec.trendScore > 25 ? '偏強' : rec.trendScore < -10 ? '偏弱' : '中性整理';
   const trendCls = rec.trendScore > 25 ? 'red' : rec.trendScore < -10 ? 'green' : 'amber';
   const techLabel = rec.rsiNow > 70 ? '過熱' : rec.rsiNow < 30 ? '超賣' : (rec.macdBull?'轉強':'偏弱');
@@ -1484,6 +1511,50 @@ function renderEtfPanel(data, isTW) {
           <span class="etf-pct">${e.weight.toFixed(2)}%</span>
         </div>`).join('')}
     </div>`;
+}
+// ─────────────────────────────────────────────────────────────
+
+// ── 個股新聞 ─────────────────────────────────────────────────
+async function fetchNews(symbolDisplay, stockName) {
+  const panel   = document.getElementById('newsPanel');
+  const content = document.getElementById('newsContent');
+  const title   = document.getElementById('newsTitle');
+  panel.style.display = '';
+  title.textContent = `個股新聞 — ${stockName || symbolDisplay}`;
+  content.innerHTML = '<div style="color:#9ec0ec;font-size:13px;"><span class="spinner"></span> 載入新聞中…</div>';
+
+  try {
+    const params = new URLSearchParams({ symbol: symbolDisplay });
+    if (stockName && stockName !== symbolDisplay) params.set('name', stockName);
+    const res = await fetchWithTimeout(`/api/news?${params}`, 10000);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const { items, error } = await res.json();
+    if (error) throw new Error(error);
+    renderNewsPanel(items || []);
+  } catch (e) {
+    content.innerHTML = `<div style="color:#5a7aaa;font-size:13px;">新聞載入失敗：${e.message}</div>`;
+  }
+}
+
+function renderNewsPanel(items) {
+  const content = document.getElementById('newsContent');
+  if (!items.length) {
+    content.innerHTML = '<div style="color:#5a7aaa;font-size:13px;">目前無相關新聞</div>';
+    return;
+  }
+  const rows = items.map(item => {
+    const d = item.pubDate ? new Date(item.pubDate) : null;
+    const dateStr = d && !isNaN(d)
+      ? d.toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : '';
+    const source = item.source || '';
+    const meta = [source, dateStr].filter(Boolean).join('・');
+    return `<div class="news-item">
+      <a href="${item.link}" target="_blank" rel="noopener noreferrer">${item.title}</a>
+      ${meta ? `<div class="news-meta">${meta}</div>` : ''}
+    </div>`;
+  }).join('');
+  content.innerHTML = `<div class="news-grid">${rows}</div>`;
 }
 // ─────────────────────────────────────────────────────────────
 

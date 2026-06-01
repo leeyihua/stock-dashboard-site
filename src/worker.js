@@ -16,6 +16,7 @@ export default {
     if (url.pathname === '/api/quote')  return handleQuote(url.searchParams, env);
     if (url.pathname === '/api/live')   return handleLive(url.searchParams, env);
     if (url.pathname === '/api/search') return handleSearch(url.searchParams, env);
+    if (url.pathname === '/api/news')   return handleNews(url.searchParams);
     return env.ASSETS.fetch(request);
   },
 };
@@ -168,6 +169,64 @@ async function handleSearch(params, env) {
     .map(s => ({ symbol: s.symbol, name: s.name }));
 
   return jsonResponse({ results });
+}
+
+async function handleNews(params) {
+  const symbol = (params.get('symbol') || '').trim();
+  const name   = (params.get('name')   || '').trim();
+  if (!symbol) return jsonResponse({ error: '缺少 symbol 參數' }, 400);
+
+  const isTW = /\.(TW|TWO)$/i.test(symbol);
+  // 台股優先用中文名稱搜尋，美股用代號
+  const rawId = symbol.replace(/\.(TW|TWO)$/i, '');
+  const query = isTW ? (name || rawId) : rawId;
+  const locale = isTW
+    ? 'zh-TW&gl=TW&ceid=TW:zh-Hant'
+    : 'en-US&gl=US&ceid=US:en';
+  const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=${locale}`;
+
+  try {
+    const res = await fetch(rssUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1)' },
+    });
+    if (!res.ok) throw new Error('Google News HTTP ' + res.status);
+    const xml = await res.text();
+    const items = parseRssItems(xml).slice(0, 10);
+    return new Response(JSON.stringify({ items }), {
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'public, max-age=900',
+      },
+    });
+  } catch (e) {
+    return jsonResponse({ error: e.message }, 502);
+  }
+}
+
+function parseRssItems(xml) {
+  const items = [];
+  const itemRe = /<item>([\s\S]*?)<\/item>/g;
+  let m;
+  while ((m = itemRe.exec(xml)) !== null) {
+    const b = m[1];
+    items.push({
+      title:   extractXml(b, 'title'),
+      link:    extractXml(b, 'link'),
+      pubDate: extractXml(b, 'pubDate'),
+      source:  extractXml(b, 'source'),
+    });
+  }
+  return items;
+}
+
+function extractXml(block, tag) {
+  // CDATA
+  let m = block.match(new RegExp(`<${tag}[^>]*><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/${tag}>`));
+  if (m) return m[1].trim();
+  // plain
+  m = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`));
+  return m ? m[1].trim() : '';
 }
 
 function jsonResponse(body, status = 200) {
