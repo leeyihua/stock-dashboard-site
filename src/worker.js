@@ -180,9 +180,7 @@ async function handleNews(params) {
   const rawId = symbol.replace(/\.(TW|TWO)$/i, '');
   // 台股用英文公司名稱搜尋（精度更高），美股直接用代號
   const query = (isTW && longName) ? longName : rawId;
-  // 台股加 TW locale 取中文新聞（大型股相關度高；小型股退而求其次為一般台股中文新聞）
-  const locale = isTW ? '&lang=zh-Hant-TW&region=TW' : '';
-  const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&newsCount=10&enableNavLinks=false${locale}`;
+  const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&newsCount=10&enableNavLinks=false`;
 
   try {
     const res = await fetch(url, {
