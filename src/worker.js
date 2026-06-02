@@ -172,21 +172,19 @@ async function handleSearch(params, env) {
 }
 
 async function handleNews(params, env) {
-  const symbol = (params.get('symbol') || '').trim();
+  const symbol   = (params.get('symbol')   || '').trim();
+  const longName = (params.get('longName') || '').trim();
   if (!symbol) return jsonResponse({ error: '缺少 symbol 參數' }, 400);
 
   const isTW  = /\.(TW|TWO)$/i.test(symbol);
   const rawId = symbol.replace(/\.(TW|TWO)$/i, '');
 
+  // 台股：英文公司名稱 + 中文 locale → 取繁中新聞；美股：代號搜尋
+  const query  = (isTW && longName) ? longName : rawId;
+  const locale = isTW ? '&lang=zh-TW&region=TW' : '';
+  const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&newsCount=10&enableNavLinks=false${locale}`;
+
   try {
-    let query = rawId;
-    if (isTW) {
-      const tickers = await fetchTickers(env);
-      const zhName  = tickers.find(t => t.symbol === rawId)?.name;
-      if (!zhName) throw new Error(`查無台股代號 ${rawId}`);
-      query = zhName;
-    }
-    const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&newsCount=10&enableNavLinks=false`;
     const res = await fetch(url, { headers: YAHOO_HEADERS, signal: AbortSignal.timeout(8000) });
     if (!res.ok) throw new Error('Yahoo Finance HTTP ' + res.status);
     const data = await res.json();
