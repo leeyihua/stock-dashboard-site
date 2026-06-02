@@ -172,50 +172,25 @@ async function handleSearch(params, env) {
 }
 
 async function handleNews(params, env) {
-  const symbol   = (params.get('symbol')   || '').trim();
-  const longName = (params.get('longName') || '').trim();
+  const symbol = (params.get('symbol') || '').trim();
   if (!symbol) return jsonResponse({ error: '缺少 symbol 參數' }, 400);
 
   const isTW  = /\.(TW|TWO)$/i.test(symbol);
   const rawId = symbol.replace(/\.(TW|TWO)$/i, '');
 
-  // 台股：從 Fugle 快取查中文名稱，轉成 Google News RSS 中文搜尋
-  if (isTW && env.FUGLE_API_KEY) {
-    try {
-      const tickers = await fetchTickers(env);
-      const ticker  = tickers.find(t => t.symbol === rawId);
-      const zhName  = ticker?.name;
-      if (zhName) {
-        const items = await fetchGoogleNewsRss(`${zhName} 股票`, 'zh-TW', 'TW', 'TW:zh-Hant');
-        return new Response(JSON.stringify({ items }), {
-          headers: {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-            'Cache-Control': 'public, max-age=900',
-          },
-        });
-      }
-    } catch (e) {
-      console.warn('Google News RSS 失敗，fallback Yahoo:', e.message);
-    }
-  }
-
-  // 美股 或 Fugle 查無中文名：Yahoo Finance 英文新聞
-  const query = (isTW && longName) ? longName : rawId;
-  const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&newsCount=10&enableNavLinks=false`;
   try {
-    const res = await fetch(url, {
-      headers: YAHOO_HEADERS,
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) throw new Error('Yahoo Finance HTTP ' + res.status);
-    const data = await res.json();
-    const items = (data.news || []).map(n => ({
-      title:   n.title   || '',
-      link:    n.link    || '',
-      pubDate: n.providerPublishTime ? new Date(n.providerPublishTime * 1000).toUTCString() : '',
-      source:  n.publisher || '',
-    }));
+    let query, hl, gl, ceid;
+    if (isTW) {
+      const tickers = await fetchTickers(env);
+      const zhName  = tickers.find(t => t.symbol === rawId)?.name;
+      if (!zhName) throw new Error(`查無台股代號 ${rawId}`);
+      query = `${zhName} 股票`;
+      hl = 'zh-TW'; gl = 'TW'; ceid = 'TW:zh-Hant';
+    } else {
+      query = `${rawId} stock`;
+      hl = 'en-US'; gl = 'US'; ceid = 'US:en';
+    }
+    const items = await fetchGoogleNewsRss(query, hl, gl, ceid);
     return new Response(JSON.stringify({ items }), {
       headers: {
         'Content-Type': 'application/json',
