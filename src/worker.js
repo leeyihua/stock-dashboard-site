@@ -181,7 +181,7 @@ async function handleNews(params, env) {
 
   // 台股：英文公司名稱 + 中文 locale → 取繁中新聞；美股：代號搜尋
   const query  = (isTW && longName) ? longName : rawId;
-  const locale = isTW ? '&lang=zh-TW&region=TW' : '';
+  const locale = isTW ? '&lang=zh-Hant-TW&region=TW' : '';
   const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&newsCount=10&enableNavLinks=false${locale}`;
 
   try {
