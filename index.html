@@ -1527,7 +1527,10 @@ async function fetchNews(symbolDisplay, stockName, longName) {
     const params = new URLSearchParams({ symbol: symbolDisplay });
     if (longName) params.set('longName', longName);
     const res = await fetchWithTimeout(`/api/news?${params}`, 10000);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || 'HTTP ' + res.status);
+    }
     const { items, error } = await res.json();
     if (error) throw new Error(error);
     renderNewsPanel(items || []);
