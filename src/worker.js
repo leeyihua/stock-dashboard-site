@@ -16,7 +16,7 @@ export default {
     if (url.pathname === '/api/quote')  return handleQuote(url.searchParams, env);
     if (url.pathname === '/api/live')   return handleLive(url.searchParams, env);
     if (url.pathname === '/api/search') return handleSearch(url.searchParams, env);
-    if (url.pathname === '/api/news')   return handleNews(url.searchParams);
+    if (url.pathname === '/api/news')   return handleNews(url.searchParams, env);
     return env.ASSETS.fetch(request);
   },
 };
@@ -171,17 +171,38 @@ async function handleSearch(params, env) {
   return jsonResponse({ results });
 }
 
-async function handleNews(params) {
+async function handleNews(params, env) {
   const symbol   = (params.get('symbol')   || '').trim();
   const longName = (params.get('longName') || '').trim();
   if (!symbol) return jsonResponse({ error: '缺少 symbol 參數' }, 400);
 
   const isTW  = /\.(TW|TWO)$/i.test(symbol);
   const rawId = symbol.replace(/\.(TW|TWO)$/i, '');
-  // 台股用英文公司名稱搜尋（精度更高），美股直接用代號
+
+  // 台股：從 Fugle 快取查中文名稱，轉成 Google News RSS 中文搜尋
+  if (isTW && env.FUGLE_API_KEY) {
+    try {
+      const tickers = await fetchTickers(env);
+      const ticker  = tickers.find(t => t.symbol === rawId);
+      const zhName  = ticker?.name;
+      if (zhName) {
+        const items = await fetchGoogleNewsRss(`${zhName} 股票`, 'zh-TW', 'TW', 'TW:zh-Hant');
+        return new Response(JSON.stringify({ items }), {
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+            'Cache-Control': 'public, max-age=900',
+          },
+        });
+      }
+    } catch (e) {
+      console.warn('Google News RSS 失敗，fallback Yahoo:', e.message);
+    }
+  }
+
+  // 美股 或 Fugle 查無中文名：Yahoo Finance 英文新聞
   const query = (isTW && longName) ? longName : rawId;
   const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&newsCount=10&enableNavLinks=false`;
-
   try {
     const res = await fetch(url, {
       headers: YAHOO_HEADERS,
@@ -205,6 +226,31 @@ async function handleNews(params) {
   } catch (e) {
     return jsonResponse({ error: e.message }, 502);
   }
+}
+
+async function fetchGoogleNewsRss(query, hl, gl, ceid) {
+  const url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=${hl}&gl=${gl}&ceid=${ceid}`;
+  const res = await fetch(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error('Google News HTTP ' + res.status);
+  const xml = await res.text();
+  const items = [];
+  for (const m of xml.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
+    const s     = m[1];
+    const title  = (/<title>([\s\S]*?)<\/title>/.exec(s))?.[1] ?? '';
+    const link   = (/<link>([\s\S]*?)<\/link>/.exec(s))?.[1] ?? '';
+    const pubDate= (/<pubDate>([\s\S]*?)<\/pubDate>/.exec(s))?.[1] ?? '';
+    const source = (/<source[^>]*>([\s\S]*?)<\/source>/.exec(s))?.[1] ?? '';
+    if (title && link) items.push({
+      title:   title.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/&quot;/g, '"'),
+      link,
+      pubDate: pubDate ? new Date(pubDate).toUTCString() : '',
+      source,
+    });
+  }
+  return items.slice(0, 10);
 }
 
 function jsonResponse(body, status = 200) {
