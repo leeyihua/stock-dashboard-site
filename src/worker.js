@@ -179,18 +179,23 @@ async function handleNews(params, env) {
   const rawId = symbol.replace(/\.(TW|TWO)$/i, '');
 
   try {
-    let query, hl, gl, ceid;
+    let query = rawId;
     if (isTW) {
       const tickers = await fetchTickers(env);
       const zhName  = tickers.find(t => t.symbol === rawId)?.name;
       if (!zhName) throw new Error(`查無台股代號 ${rawId}`);
-      query = `${zhName} 股票`;
-      hl = 'zh-TW'; gl = 'TW'; ceid = 'TW:zh-Hant';
-    } else {
-      query = `${rawId} stock`;
-      hl = 'en-US'; gl = 'US'; ceid = 'US:en';
+      query = zhName;
     }
-    const items = await fetchGoogleNewsRss(query, hl, gl, ceid);
+    const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&newsCount=10&enableNavLinks=false`;
+    const res = await fetch(url, { headers: YAHOO_HEADERS, signal: AbortSignal.timeout(8000) });
+    if (!res.ok) throw new Error('Yahoo Finance HTTP ' + res.status);
+    const data = await res.json();
+    const items = (data.news || []).map(n => ({
+      title:   n.title   || '',
+      link:    n.link    || '',
+      pubDate: n.providerPublishTime ? new Date(n.providerPublishTime * 1000).toUTCString() : '',
+      source:  n.publisher || '',
+    }));
     return new Response(JSON.stringify({ items }), {
       headers: {
         'Content-Type': 'application/json',
@@ -203,30 +208,6 @@ async function handleNews(params, env) {
   }
 }
 
-async function fetchGoogleNewsRss(query, hl, gl, ceid) {
-  const url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=${hl}&gl=${gl}&ceid=${ceid}`;
-  const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!res.ok) throw new Error('Google News HTTP ' + res.status);
-  const xml = await res.text();
-  const items = [];
-  for (const m of xml.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
-    const s     = m[1];
-    const title  = (/<title>([\s\S]*?)<\/title>/.exec(s))?.[1] ?? '';
-    const link   = (/<link>([\s\S]*?)<\/link>/.exec(s))?.[1] ?? '';
-    const pubDate= (/<pubDate>([\s\S]*?)<\/pubDate>/.exec(s))?.[1] ?? '';
-    const source = (/<source[^>]*>([\s\S]*?)<\/source>/.exec(s))?.[1] ?? '';
-    if (title && link) items.push({
-      title:   title.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/&quot;/g, '"'),
-      link,
-      pubDate: pubDate ? new Date(pubDate).toUTCString() : '',
-      source,
-    });
-  }
-  return items.slice(0, 10);
-}
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
