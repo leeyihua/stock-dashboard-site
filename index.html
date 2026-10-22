@@ -333,8 +333,25 @@
   .news-item a:hover { color: #cfe3ff; text-decoration: underline; }
   .news-meta { font-size: 11px; color: #4a6a90; margin-top: 3px; }
 
+  .s2560-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+  }
+  .s2560-card {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid #1a2f50; border-radius: 6px;
+    padding: 10px 12px; font-size: 12px; color: #cfe3ff;
+  }
+  .s2560-card .k { color: #9ec0ec; margin-bottom: 4px; }
+  .s2560-card .v { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+  .s2560-card .d { color: #9ec0ec; line-height: 1.6; }
+  .s2560-card.signal { border-width: 2px; }
+  .s2560-note { font-size: 11px; color: #7d96bd; margin-top: 8px; line-height: 1.6; }
+
   @media (max-width: 1199px) {
     .dashboard { grid-template-columns: 1fr 1fr; }
+    .s2560-grid { grid-template-columns: 1fr 1fr; }
     .col-right-2 { grid-column: 1 / -1; }
     .col-left-2  { grid-column: 1 / -1; }
     .footer { grid-template-columns: repeat(3, 1fr); }
@@ -346,6 +363,7 @@
     .searchbar input { width: 100%; min-width: 0; }
     .searchbar .key-input { width: 100%; min-width: 0; }
     .dashboard { grid-template-columns: 1fr; }
+    .s2560-grid { grid-template-columns: 1fr; }
     .panel.span2 { grid-row: span 1; }
     .header { padding: 12px 14px; gap: 6px 20px; }
     .header .title { font-size: 20px; }
@@ -472,6 +490,11 @@
   <div class="panel">
     <h3>中長線看法</h3>
     <div class="mid-long" id="midLongBox"></div>
+  </div>
+
+  <div class="panel" id="s2560Panel" style="grid-column: 1 / -1;">
+    <h3>2560 戰法訊號</h3>
+    <div id="s2560Content"></div>
   </div>
 
   <div class="panel" id="etfPanel" style="grid-column: 1 / -1; display:none;">
@@ -1436,6 +1459,8 @@ async function analyze(symbol) {
       <li>${rec.aboveMA60 ? '建議：可作為核心持股之一，搭配 ETF 分散風險' : '建議：避免重壓，等待趨勢明確再進場'}</li>
     </ul>`;
 
+  render2560Panel(stock);
+
   // ETF 持有清單（非同步，不阻擋主流程）
   if (stock.isTW) {
     const etfPanel = document.getElementById('etfPanel');
@@ -1468,6 +1493,106 @@ async function analyze(symbol) {
     <div class="stat"><div class="k">籌碼</div><div class="v ${chipCls}">${chipLabel}</div></div>
     <div class="stat"><div class="k">難度</div><div class="v ${diffCls}">${diffLabel}</div></div>
     <div class="disclaimer">本圖為自動技術分析，僅供參考，不保證獲利</div>`;
+}
+
+// ── 2560 戰法訊號 ─────────────────────────────────────────────
+// 規則：25 日均線向上 + 5 日均量上穿 60 日均量（量能金叉）→ 股價回踩 25 日線不破為買點；收盤跌破 25 日線出場
+function render2560Panel(stock) {
+  const box = document.getElementById('s2560Content');
+  const candles = stock.candles;
+  const n = candles.length;
+  if (n < 66) {
+    box.innerHTML = `<div style="color:#9ec0ec; font-size:13px;">資料不足（需至少 66 根日 K，目前 ${n} 根），無法計算 60 日均量。</div>`;
+    return;
+  }
+
+  const closes = candles.map(c => c.close);
+  const vols   = candles.map(c => c.volume || 0);
+  const ma25   = sma(closes, 25);
+  const i  = n - 1;
+  const px = closes[i];
+
+  // 盤中今日量未完整，量能判斷改用前一根已收盤 K 棒
+  const reg = stock.meta?.currentTradingPeriod?.regular;
+  const nowSec = Date.now() / 1000;
+  const intraday = !!reg && nowSec >= reg.start && nowSec < reg.end &&
+    candles[i].date.getTime() / 1000 >= reg.start;
+  const vi = intraday ? i - 1 : i;
+  const vma5  = sma(vols, 5);
+  const vma60 = sma(vols, 60);
+
+  // ① 25 日線方向（與 5 日前比較）
+  const slopePct = (ma25[i] - ma25[i - 5]) / ma25[i - 5] * 100;
+  const maDir = slopePct > 0.1 ? 'up' : slopePct < -0.1 ? 'down' : 'flat';
+  const maDirLabel = { up: '向上', down: '向下', flat: '走平' }[maDir];
+
+  // ② 量能金叉：目前 5 日均量是否在 60 日均量之上，並往回找最近一次金叉
+  const volBull = vma5[vi] > vma60[vi];
+  const volRatio = vma5[vi] / vma60[vi];
+  let crossAgo = null;
+  for (let k = vi; k > vi - 20 && k > 60; k--) {
+    if (vma5[k] > vma60[k] && vma5[k - 1] <= vma60[k - 1]) { crossAgo = i - k; break; }
+  }
+
+  // ③ 股價與 25 日線距離
+  const dist = (px - ma25[i]) / ma25[i] * 100;
+  const brokeToday = px < ma25[i] && closes[i - 1] >= ma25[i - 1];
+
+  // ④ 綜合訊號（紅＝偏多、綠＝偏空、橘＝等待，依台股慣例）
+  let sigHead, sigDesc, sigColor;
+  if (brokeToday) {
+    sigHead = intraday ? '盤中跌破 25 日線' : '跌破 25 日線'; sigColor = '#3ddc84';
+    sigDesc = intraday ? '盤中跌破 25 日均線，以收盤價確認是否出場。' : '收盤跌破 25 日均線，依戰法為出場訊號。';
+  } else if (px < ma25[i]) {
+    sigHead = '不符合'; sigColor = '#3ddc84';
+    sigDesc = '股價位於 25 日線下方，不在操作範圍。';
+  } else if (maDir === 'up' && volBull && dist <= 3) {
+    sigHead = '回踩買點'; sigColor = '#ff6b6b';
+    sigDesc = '25 日線向上、量能金叉，股價回踩 25 日線附近未跌破。';
+  } else if (maDir === 'up' && volBull) {
+    sigHead = '等待回踩'; sigColor = '#ffb12c';
+    sigDesc = `條件成立，但股價離 25 日線 ${pct(dist)}，避免追高，等回踩再進場。`;
+  } else {
+    sigHead = '條件未齊'; sigColor = '#ffb12c';
+    sigDesc = [
+      maDir !== 'up' ? '25 日線未向上' : null,
+      !volBull ? '5 日均量未在 60 日均量之上' : null,
+    ].filter(Boolean).join('、') + '，持續觀察。';
+  }
+
+  const ok = c => c ? '<span style="color:#ff6b6b;">✔ 符合</span>' : '<span style="color:#3ddc84;">✘ 不符合</span>';
+  const crossText = volBull
+    ? (crossAgo != null ? (crossAgo === 0 ? '今日金叉' : `${crossAgo} 個交易日前金叉`) : '金叉已超過 20 個交易日')
+    : '尚未金叉';
+
+  box.innerHTML = `
+    <div class="s2560-grid">
+      <div class="s2560-card">
+        <div class="k">① 25 日均線方向</div>
+        <div class="v" style="color:${maDir==='up'?'#ff6b6b':maDir==='down'?'#3ddc84':'#ffb12c'};">${maDirLabel}</div>
+        <div class="d">MA25 ${fmt(ma25[i])}，5 日變化 ${pct(slopePct)}<br/>${ok(maDir === 'up')}</div>
+      </div>
+      <div class="s2560-card">
+        <div class="k">② 量能金叉（5 日均量 / 60 日均量）</div>
+        <div class="v" style="color:${volBull?'#ff6b6b':'#3ddc84'};">${crossText}</div>
+        <div class="d">${fmtVol(vma5[vi])} / ${fmtVol(vma60[vi])}（${fmt(volRatio * 100, 0)}%）<br/>${ok(volBull)}</div>
+      </div>
+      <div class="s2560-card">
+        <div class="k">③ 股價與 25 日線</div>
+        <div class="v" style="color:${dist>=0?'#ff6b6b':'#3ddc84'};">${pct(dist)}</div>
+        <div class="d">${intraday ? '盤中價' : '收盤'} ${fmt(px)}，${dist < 0 ? '位於 25 日線下方' : dist <= 3 ? '貼近 25 日線（3% 內）' : '高於 25 日線'}<br/>${ok(dist >= 0 && dist <= 3)}</div>
+      </div>
+      <div class="s2560-card signal" style="border-color:${sigColor};">
+        <div class="k">④ 綜合訊號</div>
+        <div class="v" style="color:${sigColor};">${sigHead}</div>
+        <div class="d">${sigDesc}</div>
+      </div>
+    </div>
+    <div class="s2560-note">
+      規則：25 日均線向上 + 5 日均量上穿 60 日均量 → 回踩 25 日線不破為買點；收盤跌破 25 日線出場。
+      ${intraday ? '<br/><span style="color:#ffb12c;">盤中今日成交量未完整，量能判斷以前一交易日為準。</span>' : ''}
+      僅供參考，非投資建議。
+    </div>`;
 }
 
 // ── ETF 持有清單 ──────────────────────────────────────────────
