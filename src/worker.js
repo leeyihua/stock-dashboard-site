@@ -97,7 +97,8 @@ async function handleLive(params, env) {
       return new Response(JSON.stringify({
         price:     d.lastPrice,
         prevClose: d.previousClose ?? null,
-        volume:    d.total?.tradeVolume ?? null,
+        // Fugle 成交量單位為「張」，轉為「股」以與 Yahoo 一致
+        volume:    d.total?.tradeVolume != null ? d.total.tradeVolume * 1000 : null,
         // Fugle 時間戳為微秒，轉換為秒
         time:      d.closeTime ? Math.floor(d.closeTime / 1_000_000) : null,
       }), {
