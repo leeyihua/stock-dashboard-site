@@ -61,16 +61,17 @@ push 到 `master` 後由 GitHub Actions（`.github/workflows/deploy.yml`）執�
 
 | 功能 | 函式 | 約略行數 |
 |------|------|--------|
-| CSS（含 RWD 斷點 1199px / 767px） | — | 1–350 |
-| 資料抓取與備援鏈 | `fetchYahoo` / `fetchTwelveData` / `fetchFinMind` / `fetchWorker` / `fetchStock` | 490–650 |
-| 技術指標計算 | `sma` / `ema` / `rsi` / `macd` / `kd` | 650–715 |
-| 推薦評分系統 | `buildRecommendation` | 715–780 |
-| 即時報價 | `fetchLiveQuote` / `updateLiveQuote` / `startLiveQuote` | 795–890 |
-| 圖表渲染 | `renderCandles` / `renderVolume` / `renderRSI` / `renderMACD` / `renderKD` / `renderGauge` | 905–1110 |
-| 主流程與面板組裝 | `analyze` | 1110–1470 |
-| ETF 持有清單 | `fetchEtfHoldings` / `renderEtfPanel`（Google Apps Script `ETF_API`） | 1474–1515 |
-| 個股新聞 | `fetchNews` / `renderNewsPanel` | 1518–1565 |
-| 搜尋 autocomplete | `doSearch` / `renderDropdown` | 1567–結尾 |
+| CSS（含 RWD 斷點 1199px / 767px） | — | 1–370 |
+| 資料抓取與備援鏈 | `fetchYahoo` / `fetchTwelveData` / `fetchFinMind` / `fetchWorker` / `fetchStock` | 514–673 |
+| 技術指標計算 | `sma` / `ema` / `rsi` / `macd` / `kd` | 674–737 |
+| 推薦評分系統 | `buildRecommendation` | 738–800 |
+| 即時報價 | `fetchLiveQuote` / `updateLiveQuote` / `startLiveQuote` | 821–910 |
+| 圖表渲染 | `renderCandles` / `renderVolume` / `renderRSI` / `renderMACD` / `renderKD` / `renderGauge` | 932–1132 |
+| 主流程與面板組裝 | `analyze` | 1133–1497 |
+| 2560 戰法訊號 | `render2560Panel` | 1500–1597 |
+| ETF 持有清單 | `fetchEtfHoldings` / `renderEtfPanel`（Google Apps Script `ETF_API`） | 1598–1640 |
+| 個股新聞 | `fetchNews` / `renderNewsPanel` | 1643–1690 |
+| 搜尋 autocomplete | `doSearch` / `renderDropdown` | 1692–結尾 |
 
 ### 推薦評分邏輯
 
@@ -78,6 +79,12 @@ push 到 `master` 後由 GitHub Actions（`.github/workflows/deploy.yml`）執�
 - **動能分數**：RSI、MACD（DIF/訊號線、柱狀體變化）、KD 交叉與超買超賣
 - **總分閾值**：≥35 且 RSI<78 → **BUY**；≥18 → **HOLD**；≤-25 → **SELL**；其餘 → **WAIT**
 - **勝率**：`clamp(50 + total * 0.5, 5, 95)`
+
+### 2560 戰法訊號（獨立面板，不影響評分）
+
+- 25 日均線向上 + 5 日均量 > 60 日均量（量能金叉）+ 股價在 25 日線上方 3% 內 → 回踩買點；跌破 25 日線 → 出場
+- 盤中（依 `meta.currentTradingPeriod.regular` 判斷）量能改用前一根已收盤 K 棒
+- 少於 66 根 K 棒顯示資料不足
 
 ### 資料源細節
 
